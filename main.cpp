@@ -1,16 +1,22 @@
 #include <iostream>
 #include <fstream>
 #include <proj.h>
+#include
 
 using namespace std;
 
 int proj93(fstream& output);
 
 int main() {
+  // projection des coordonnées GPS, WGS84 -> xyz cartésien
   fstream data_proj;
   data_proj.precision(11);    // precision of raw datas
   data_proj.open("../datas/MNT_lilrade_PROJ.txt" , fstream::out);
   proj93(data_proj);
+
+
+
+
   data_proj.close();
 }
 
@@ -49,9 +55,6 @@ int proj93(fstream& output) {
       // écriture du fichier output
       output << c_out.xyz.x << " " << c_out.xyz.y << " " << c_out.xyz.z << endl;
     }
-
-
-
     proj_destroy(P);
   }
   data.close();
