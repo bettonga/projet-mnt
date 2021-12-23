@@ -53,8 +53,11 @@ int main() {
   img << pgm_max << endl;
   for (int i=0; i<img_height; i++) {
     for (int j=0; j<img_width; j++) {
-      img_z = get_z(dt, min_x+i/density, max_y-j/density, old_fh);
-      pgm = round(coeff*img_z+offset);
+      try{
+        img_z = get_z(dt, min_x+j/density, max_y-i/density, old_fh);
+        pgm = round(coeff*img_z+offset);
+      }
+      catch (invalid_argument& e){pgm = 0;}
       img << pgm << " ";
     }
     img << endl;
@@ -79,10 +82,10 @@ int proj93(Delaunay& dt) {
   // initialisation de la projection
   PJ *P;
   PJ_COORD c, c_out;
-  // x_0 et y_0 première mesure, par défaut: +x_0=700000 +y_0=6600000
+  // x_0 et y_0 première mesure, par défaut +x_0=-6.74423e+06 +y_0=4.38037e+06
   P = proj_create_crs_to_crs(PJ_DEFAULT_CTX,
                              "+proj=longlat +datum=WGS84",
-                             "+proj=lcc +lat_1=49 +lat_2=44 +lat_0=46.5 +lon_0=3 +x_0=-6744040 +y_0=4381740 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs",
+                             "+proj=lcc +lat_1=49 +lat_2=44 +lat_0=46.5 +lon_0=3 +x_0=700000 +y_0=6600000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs",
                              NULL);
   if (P==0){return 1;}
   else {
@@ -92,14 +95,24 @@ int proj93(Delaunay& dt) {
     P = P_for_GIS;
 
     //lecture du fichier de données
+    bool first = true;
     while (data >> lat >> lon >> z){
       // projection de chaque coordonnées
       c.lpz.lam = lat;
       c.lpz.phi = lon;
       c.lpz.z = z;
       c_out = proj_trans(P, PJ_FWD, c);
+      if (first == true){
+        min_x = c_out.xyz.x;
+        max_x = c_out.xyz.x;
+        min_y = c_out.xyz.y;
+        max_y = c_out.xyz.y;
+        min_z = c_out.xyz.z;
+        max_z = c_out.xyz.z;
+        first = false;
+      }
       update_maxmin(min_x, max_x, min_y, max_y, min_z, max_z, c_out.xyz.x, c_out.xyz.y, c_out.xyz.z);
-      // insetion dans la triangulation
+      // insertion dans la triangulation
       Point_3 p(c_out.xyz.x, c_out.xyz.y, c_out.xyz.z);
       dt.insert(p);
     }
@@ -112,7 +125,7 @@ int proj93(Delaunay& dt) {
 double get_z(Delaunay& dt, double x, double y, Face_handle& old_fh){
   Point_3 p(x,y,0.0);
   Face_handle fh = dt.locate(p, old_fh);
-  if (fh==nullptr || dt.is_infinite(fh)) {return 0;}
+  if (fh==nullptr || dt.is_infinite(fh)) {throw invalid_argument("Infinite or Null or  face");}
   old_fh = fh;
   Point_3 a = fh->vertex(0)->point();
   Point_3 b = fh->vertex(1)->point();
@@ -129,6 +142,6 @@ void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, d
   else if (new_x>max_x) {max_x = ceil(new_x);}
   if (new_y<min_y) {min_y = floor(new_y);}
   else if (new_y>max_y) {max_y = ceil(new_y);}
-  if (new_z<min_z) {min_z = new_z;}
-  else if (new_z>max_z) {max_z = new_z;}
+  else if (new_z<min_z) {min_z = new_z;}
+  if (new_z>max_z) {max_z = new_z;}
 }
