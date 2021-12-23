@@ -19,25 +19,14 @@ using namespace std;
 
 
 
-int proj93(fstream& output);
+int proj93(Delaunay& dt);
 
 double get_z(Delaunay& dt, double x, double y, Face_handle& old_fh);
 
 int main() {
-  // projection des coordonnées GPS, WGS84 -> xyz cartésien
-  fstream data_proj;
-
-  data_proj.precision(11);    // precision of raw datas
-  data_proj.open("../datas/MNT_lilrade_PROJ.txt" , fstream::out);
-  proj93(data_proj);
-  data_proj.close();
-
-  ifstream in("../datas/MNT_lilrade_PROJ.txt");
-  istream_iterator<Point_3> begin(in);
-  istream_iterator<Point_3> end;
-
-  Delaunay dt(begin, end);
-  cout << dt.number_of_vertices() << endl;
+  // projection des coordonnées GPS, WGS84 -> xyz cartésien et triangulation Delaunay avec la librairie CGAL
+  Delaunay dt;
+  proj93(dt);
 
   Face_handle old_fh = NULL;
   double z = get_z(dt, 15.0, 2.0, old_fh);
@@ -49,7 +38,7 @@ int main() {
 
 
 
-int proj93(fstream& output) {
+int proj93(Delaunay& dt) {
   fstream data;
   double lat;
   double lon;
@@ -79,8 +68,9 @@ int proj93(fstream& output) {
       c.lpz.phi = lon;
       c.lpz.z = z;
       c_out = proj_trans(P, PJ_FWD, c);
-      // écriture du fichier output
-      output << c_out.xyz.x << " " << c_out.xyz.y << " " << c_out.xyz.z << endl;
+      // insetion dans la triangulation
+      Point_3 p(c_out.xyz.x, c_out.xyz.y, c_out.xyz.z);
+      dt.insert(p);
     }
     proj_destroy(P);
   }
