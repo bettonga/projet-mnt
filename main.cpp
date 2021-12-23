@@ -7,6 +7,7 @@
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Projection_traits_xy_3.h>
 #include <CGAL/Delaunay_triangulation_2.h>
+#include <CGAL/Polygon_mesh_processing/measure.h>
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
 typedef CGAL::Projection_traits_xy_3<K>  Gt;
@@ -15,34 +16,35 @@ typedef CGAL::Delaunay_triangulation_2<Gt> Delaunay;
 typedef Delaunay::Face_handle Face_handle;
 typedef Delaunay::Vertex_handle Vertex_handle;
 typedef K::Point_3   Point_3;
+typedef K::Vector_3   Vector_3;
 
 using namespace std;
 
+#define MAX_AREA 10.0
+#define MAX_PGM 256
+#define MIN_PGM 10
 
 
-int proj93(Delaunay& dt);
+int proj93(Delaunay& dt, char* file_name);
 void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, double& min_z, double& max_z, double new_x, double new_y, double new_z);
 double get_z(Delaunay& dt, double x, double y, Face_handle& old_fh);
 
 double min_x, max_x, min_y, max_y, min_z, max_z;
 
-int main() {
-  int img_width = 800;
-  int img_height;
-  int pgm_max = 256;
-  double density, coeff, offset;
+int main(int argc, char *argv[]) {
   double img_z;
   int pgm;
 
   // projection des coordonnées GPS, WGS84 -> xyz cartésien et triangulation Delaunay avec la librairie CGAL
   Delaunay dt;
-  proj93(dt);
+  proj93(dt, argv[1]);
 
   // calculs de la taille de l'image, de la densité de pixel (pixel/m) et des coeff et offset pour pgm
-  density = img_width / (max_x - min_x);
-  img_height = ceil(density * (max_y - min_y));
-  coeff = pgm_max/(max_z-min_z);
-  offset = -(min_z*pgm_max)/(max_z-min_z);
+  const int img_width = strtol(argv[2], NULL, 10);
+  const double density = img_width / (max_x - min_x);
+  const int img_height = ceil(density * (max_y - min_y));
+  const double coeff = (MAX_PGM-MIN_PGM)/(max_z-min_z);
+  const double offset = MIN_PGM - coeff*min_z;
 
   // création de l'image
   Face_handle old_fh = NULL;
@@ -50,7 +52,7 @@ int main() {
   img.open("../img_output/yoyo.pgm", fstream::out);
   img << "P2" << endl;
   img << img_width << " " << img_height << endl;
-  img << pgm_max << endl;
+  img << MAX_PGM << endl;
   for (int i=0; i<img_height; i++) {
     for (int j=0; j<img_width; j++) {
       try{
@@ -71,13 +73,13 @@ int main() {
 
 
 
-int proj93(Delaunay& dt) {
+int proj93(Delaunay& dt, char* file_name) {
   fstream data;
   double lat;
   double lon;
   double z;
 
-  data.open("../datas/rade_1m_IM.txt" , fstream::in);
+  data.open(file_name, fstream::in);
 
   // initialisation de la projection
   PJ *P;
@@ -125,11 +127,14 @@ int proj93(Delaunay& dt) {
 double get_z(Delaunay& dt, double x, double y, Face_handle& old_fh){
   Point_3 p(x,y,0.0);
   Face_handle fh = dt.locate(p, old_fh);
-  if (fh==nullptr || dt.is_infinite(fh)) {throw invalid_argument("Infinite or Null or  face");}
+  if (fh==nullptr || dt.is_infinite(fh)) {throw invalid_argument("Infinite or Null face");}
   old_fh = fh;
   Point_3 a = fh->vertex(0)->point();
   Point_3 b = fh->vertex(1)->point();
   Point_3 c = fh->vertex(2)->point();
+  Vector_3 u(a,b);
+  Vector_3 v(a,c);
+  if (0.5*(cross_product(u,v).squared_length()) > MAX_AREA) {throw invalid_argument("Too large face");}
   double denom = (c[0]-a[0])*(b[1]-a[1]) - (c[1]-a[1])*(b[0]-a[0]);
   double mu = (  (b[1]-a[1])*(x-a[0]) - (b[0]-a[0])*(y-a[1]) ) / denom;
   double la = ( -(c[1]-a[1])*(x-a[0]) + (c[0]-a[0])*(y-a[1]) ) / denom;
