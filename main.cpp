@@ -2,6 +2,7 @@
 #include <fstream>
 #include <proj.h>
 #include <cstdio>
+#include <math.h>
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Projection_traits_xy_3.h>
@@ -20,17 +21,46 @@ using namespace std;
 
 
 int proj93(Delaunay& dt);
-
+void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, double& min_z, double& max_z, double new_x, double new_y, double new_z);
 double get_z(Delaunay& dt, double x, double y, Face_handle& old_fh);
 
+double min_x, max_x, min_y, max_y, min_z, max_z;
+
 int main() {
+  int img_width = 800;
+  int img_height;
+  int pgm_max = 256;
+  double density, coeff, offset;
+  double img_z;
+  int pgm;
+
   // projection des coordonnées GPS, WGS84 -> xyz cartésien et triangulation Delaunay avec la librairie CGAL
   Delaunay dt;
   proj93(dt);
 
+  // calculs de la taille de l'image, de la densité de pixel (pixel/m) et des coeff et offset pour pgm
+  density = img_width / (max_x - min_x);
+  img_height = ceil(density * (max_y - min_y));
+  coeff = pgm_max/(max_z-min_z);
+  offset = -(min_z*pgm_max)/(max_z-min_z);
+
+  // création de l'image
   Face_handle old_fh = NULL;
-  double z = get_z(dt, 15.0, 2.0, old_fh);
-  cout << z << endl;
+  fstream img;
+  img.open("../img_output/yoyo.pgm", fstream::out);
+  img << "P2" << endl;
+  img << img_width << " " << img_height << endl;
+  img << pgm_max << endl;
+  for (int i=0; i<img_height; i++) {
+    for (int j=0; j<img_width; j++) {
+      img_z = get_z(dt, min_x+i/density, max_y-j/density, old_fh);
+      pgm = round(coeff*img_z+offset);
+      img << pgm << " ";
+    }
+    img << endl;
+  }
+
+  cout << min_x << " " << max_x << " " << min_y << " " << max_y << " " << min_z << " " << max_z << endl;
 
   return EXIT_SUCCESS;
 
@@ -44,7 +74,7 @@ int proj93(Delaunay& dt) {
   double lon;
   double z;
 
-  data.open("../datas/MNT_lilrade.txt" , fstream::in);
+  data.open("../datas/rade_1m_IM.txt" , fstream::in);
 
   // initialisation de la projection
   PJ *P;
@@ -68,6 +98,7 @@ int proj93(Delaunay& dt) {
       c.lpz.phi = lon;
       c.lpz.z = z;
       c_out = proj_trans(P, PJ_FWD, c);
+      update_maxmin(min_x, max_x, min_y, max_y, min_z, max_z, c_out.xyz.x, c_out.xyz.y, c_out.xyz.z);
       // insetion dans la triangulation
       Point_3 p(c_out.xyz.x, c_out.xyz.y, c_out.xyz.z);
       dt.insert(p);
@@ -81,6 +112,7 @@ int proj93(Delaunay& dt) {
 double get_z(Delaunay& dt, double x, double y, Face_handle& old_fh){
   Point_3 p(x,y,0.0);
   Face_handle fh = dt.locate(p, old_fh);
+  if (fh==nullptr || dt.is_infinite(fh)) {return 0;}
   old_fh = fh;
   Point_3 a = fh->vertex(0)->point();
   Point_3 b = fh->vertex(1)->point();
@@ -90,4 +122,13 @@ double get_z(Delaunay& dt, double x, double y, Face_handle& old_fh){
   double la = ( -(c[1]-a[1])*(x-a[0]) + (c[0]-a[0])*(y-a[1]) ) / denom;
   double z = a[2] + la*(b[2]-a[2]) + mu*(c[2]-a[2]);
   return z;
+}
+
+void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, double& min_z, double& max_z, double new_x, double new_y, double new_z){
+  if (new_x<min_x) {min_x = floor(new_x);}
+  else if (new_x>max_x) {max_x = ceil(new_x);}
+  if (new_y<min_y) {min_y = floor(new_y);}
+  else if (new_y>max_y) {max_y = ceil(new_y);}
+  if (new_z<min_z) {min_z = new_z;}
+  else if (new_z>max_z) {max_z = new_z;}
 }
