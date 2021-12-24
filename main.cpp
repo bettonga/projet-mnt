@@ -24,7 +24,7 @@ typedef K::Vector_3   Vector_3;
 using namespace std;
 
 #define MAX_AREA 10.0
-#define MAX_PGM 256
+#define MAX_PGM 255
 #define MIN_PGM 10
 
 
@@ -32,6 +32,7 @@ int proj93(Delaunay& dt, char* file_name);
 void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, double& min_z, double& max_z, double new_x, double new_y, double new_z);
 double get_z(const Delaunay& dt, double x, double y, Face_handle& old_fh);
 void create_pgm(const Delaunay& dt, const int& img_width, const int& img_height, const double& density);
+void create_pgm_bin(const Delaunay& dt, const int& img_width, const int& img_height, const double& density);
 
 double min_x, max_x, min_y, max_y, min_z, max_z;
 
@@ -51,8 +52,9 @@ int main(int argc, char *argv[]) {
   const double density = img_width / (max_x - min_x);
   const int img_height = ceil(density * (max_y - min_y));
 
-  // création de l'image PGM
-  create_pgm(dt, img_width, img_height, density);
+  // création de l'image
+  create_pgm_bin(dt, img_width, img_height, density);
+  // create_pgm(dt, img_width, img_height, density);
 
   // fin du chrono
   auto end = std::chrono::system_clock::now();
@@ -154,29 +156,67 @@ void create_pgm(const Delaunay& dt, const int& img_width, const int& img_height,
   Face_handle old_fh = NULL;
   fstream img;
 
+  // génération du file_name selon la date et l'heure
   time_t rawtime;
   struct tm * ptm;
   time ( &rawtime );
   ptm = gmtime ( &rawtime );
-
   string file_name = "../img_output/" + to_string(ptm->tm_mday) + "-" + to_string(ptm->tm_mon) + "_" + to_string(ptm->tm_hour) + "-" + to_string(ptm->tm_min) + "_render.pgm";
+
+  // initialisaition de l'image pgm (P2 pour pgm ASCII)
   img.open(file_name, fstream::out);
-  img << "P2" << endl;
-  img << img_width << " " << img_height << endl;
-  img << MAX_PGM << endl;
+  img << "P2" << " " << img_width << " " << img_height << " " << MAX_PGM << endl;
+
+  // parcours des pixels et correspondance pixel <-> coordonnées cartésiennes
+  for (int i=0; i<img_height; i++) {
+    for (int j=0; j<img_width; j++) {
+      // calcul du niveau de gris si le pixel pointe sur une face acceptable (finie, non nulle, et d'aire < MAX_AREA)
+      try{
+        img_z = get_z(dt, min_x+j/density, max_y-i/density, old_fh);
+        pgm = round(coeff*img_z+offset);
+      }
+      catch (invalid_argument& e) {pgm = 0;}
+      img << pgm << " ";
+    }
+    img << endl;
+  }
+}
+
+void create_pgm_bin(const Delaunay& dt, const int& img_width, const int& img_height, const double& density) {
+  const double coeff = (MAX_PGM-MIN_PGM)/(max_z-min_z);
+  const double offset = MIN_PGM - coeff*min_z;
+  double img_z;
+  int pgm;
+  int pgm_null = 1;             // 0 cause skipping
+  Face_handle old_fh = NULL;
+  fstream img;
+
+  // génération du file_name selon la date et l'heure
+  time_t rawtime;
+  struct tm * ptm;
+  time ( &rawtime );
+  ptm = gmtime ( &rawtime );
+  string file_name = "../img_output/" + to_string(ptm->tm_mday) + "-" + to_string(ptm->tm_mon) + "_" + to_string(ptm->tm_hour) + "-" + to_string(ptm->tm_min) + "_render.pgm";
+
+  // initialisaition de l'image pgm (P2 pour pgm ASCII)
+  img.open(file_name, fstream::out | fstream::binary);
+  img << "P5" << " "
+      << img_width << " "
+      << img_height << " "
+      << (int) MAX_PGM << endl;
 
 
   // parcours des pixels et correspondance pixel <-> coordonnées cartésiennes
   for (int i=0; i<img_height; i++) {
     for (int j=0; j<img_width; j++) {
-      // calcul du niveau de gris si le pixel point sur une face acceptable (finie, non nulle, et d'aire < MAX_AREA)
+      // calcul du niveau de gris si le pixel pointe sur une face acceptable (finie, non nulle, et d'aire < MAX_AREA)
       try{
         img_z = get_z(dt, min_x+j/density, max_y-i/density, old_fh);
         pgm = round(coeff*img_z+offset);
+        img << reinterpret_cast<char*>(&pgm);
       }
-      catch (invalid_argument& e){pgm = 0;}
-      img << pgm << " ";
+      catch (invalid_argument& e) {img << reinterpret_cast<char*>(&pgm_null);}
     }
-    img << endl;
+    //img << endl;
   }
 }
