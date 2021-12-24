@@ -8,7 +8,9 @@ project(projet-mnt)
 # add the executable
 add_executable(output main.cpp)
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
 
 find_package(PROJ)
 find_package(CGAL)
-target_link_libraries(output ${PROJ_LIBRARIES} CGAL::CGAL)
+find_package(Threads REQUIRED)
+target_link_libraries(output ${PROJ_LIBRARIES} CGAL::CGAL Threads::Threads)

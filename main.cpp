@@ -6,6 +6,8 @@
 #include <chrono>
 #include <ctime>
 #include <string>
+#include <array>
+#include <thread>
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Projection_traits_xy_3.h>
@@ -26,6 +28,7 @@ using namespace std;
 #define MAX_AREA 10.0
 #define MAX_PGM 255
 #define MIN_PGM 10
+#define NB_THREAD 4
 
 
 int proj93(Delaunay& dt, char* file_name);
@@ -33,6 +36,8 @@ void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, d
 double get_z(const Delaunay& dt, double x, double y, Face_handle& old_fh);
 void create_pgm(const Delaunay& dt, const int& img_width, const int& img_height, const double& density);
 void create_pgm_bin(const Delaunay& dt, const int& img_width, const int& img_height, const double& density);
+void create_pgm_bin_threaded(const int n, const Delaunay& dt, const int& img_width, const int& img_height, const double& density);
+void thread_pgm_bin(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density);
 
 double min_x, max_x, min_y, max_y, min_z, max_z;
 
@@ -53,7 +58,8 @@ int main(int argc, char *argv[]) {
   const int img_height = ceil(density * (max_y - min_y));
 
   // création de l'image
-  create_pgm_bin(dt, img_width, img_height, density);
+  create_pgm_bin_threaded(NB_THREAD, dt, img_width, img_height, density);
+  //create_pgm_bin(dt, img_width, img_height, density);
   // create_pgm(dt, img_width, img_height, density);
 
   // fin du chrono
@@ -198,7 +204,7 @@ void create_pgm_bin(const Delaunay& dt, const int& img_width, const int& img_hei
   ptm = gmtime ( &rawtime );
   string file_name = "../img_output/" + to_string(ptm->tm_mday) + "-" + to_string(ptm->tm_mon) + "_" + to_string(ptm->tm_hour) + "-" + to_string(ptm->tm_min) + "_render.pgm";
 
-  // initialisaition de l'image pgm (P2 pour pgm ASCII)
+  // initialisaition de l'image pgm (P5 pour pgm binaire)
   img.open(file_name, fstream::out | fstream::binary);
   img << "P5" << " "
       << img_width << " "
@@ -217,6 +223,80 @@ void create_pgm_bin(const Delaunay& dt, const int& img_width, const int& img_hei
       }
       catch (invalid_argument& e) {img << reinterpret_cast<char*>(&pgm_null);}
     }
-    //img << endl;
   }
+}
+
+void create_pgm_bin_threaded(const int n, const Delaunay& dt, const int& img_width, const int& img_height, const double& density) {
+  // génération du file_name selon la date et l'heure
+  time_t rawtime;
+  struct tm * ptm;
+  time ( &rawtime );
+  ptm = gmtime ( &rawtime );
+  string file_name = "../img_output/" + to_string(ptm->tm_mday) + "-" + to_string(ptm->tm_mon) + "_" + to_string(ptm->tm_hour) + "-" + to_string(ptm->tm_min) + "_render.pgm";
+
+  // initialisaition de l'image pgm (P5 pour pgm binaire)
+  fstream img;
+  img.open(file_name, fstream::out | fstream::binary);
+  img << "P5" << " "
+      << img_width << " "
+      << img_height << " "
+      << (int) MAX_PGM << endl;
+
+  array<thread,NB_THREAD> threads;
+
+  for (int k=0; k<n; k++) {
+    threads[k] = thread( [=] { thread_pgm_bin(n, k, dt, img_width, img_height, density); } );
+  }
+
+  for(int k=0; k<n; k++) {
+    threads[k].join();
+  }
+
+  for(int k=0; k<n; k++) {
+    fstream img_mrg;
+    file_name = "tmp" + to_string(k);
+    img_mrg.open(file_name, fstream::in);
+
+    img << img_mrg.rdbuf();
+    img_mrg.close();
+    // remove(file_name);
+  }
+
+
+  img.close();
+}
+
+void thread_pgm_bin(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density) {
+  cout << "Thread " + to_string(k) + " starting" << endl;
+  const double coeff = (MAX_PGM-MIN_PGM)/(max_z-min_z);
+  const double offset = MIN_PGM - coeff*min_z;
+  double img_z;
+  int pgm;
+  int pgm_null = 1;             // 0 cause skipping
+  Face_handle old_fh = NULL;
+
+  fstream img_tmp;
+  string file_name;
+  file_name = "tmp" + to_string(k);
+  img_tmp.open(file_name, fstream::out | fstream::binary);
+
+  int len = ceil(img_height / n);
+  int i_min = k*len;
+  int i_max;
+  if (k==n-1) {i_max = img_height;}
+  else {i_max = (k+1)*len;}
+
+  //parcours des pixels et correspondance pixel <-> coordonnées cartésiennes
+  for (int i=i_min; i<i_max; i++) {
+    for (int j=0; j<img_width; j++) {
+      // calcul du niveau de gris si le pixel pointe sur une face acceptable (finie, non nulle, et d'aire < MAX_AREA)
+      try {
+        img_z = get_z(dt, min_x+j/density, max_y-i/density, old_fh);
+        pgm = round(coeff*img_z+offset);
+        img_tmp << reinterpret_cast<char*>(&pgm); }
+      catch (invalid_argument& e) {img_tmp << reinterpret_cast<char*>(&pgm_null);}
+      }
+    }
+  img_tmp.close();
+  cout << "Thread " + to_string(k) + " finished" << endl;
 }
