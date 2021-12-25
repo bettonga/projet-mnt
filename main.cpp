@@ -29,7 +29,8 @@ using namespace std;
 #define MAX_AREA  10.0      // define the maximum area of a triangle
 #define MAX_PGM   255       // grey level coded on 1 byte
 #define MIN_PGM   10        // >0 so that the background does not blend with the MNT
-#define BIN       true      // true for binary image file output
+#define PPM       true      // true for PPM, false for PGM
+#define BIN       true      // true for binary file, false for ASCII
 #define NB_THREAD 4         // number of threads creating the image (4 seems to be the most effective, even for larger file | set at 1 for non-parallel processing)
 
 // boundaries of the input terrain
@@ -41,13 +42,19 @@ int proj93(Delaunay& dt, char* file_name);
 
 // return the depth z according to a (x,y) point and the triangulation
 double get_z(const Delaunay& dt, double x, double y, Face_handle& old_fh);
+// if PGM: val1 is set to match the grey value | if PPM: val1, val2, val3 are respectively set to match R, G and B value
+void z_to_color(const double z, int& val1, int& val2, int& val3, const bool ppm);
+// write to file in binary or ASCII
+void write_val(fstream& data, const int val, const bool bin);
+// write to file according to PPM or PGM
+void write_img(fstream& data, const int val1, const int val2, const int val3, const bool bin, const bool ppm);
 
 // updates min_x, max_x, min_y, max_y, min_z, max_z according to the boundaries of the input terrain
 void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, double& min_z, double& max_z, double new_x, double new_y, double new_z);
 
 // function and thread associated to create the PGM image
-void create_pgm(const int n, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const bool& binary);
-void thread_pgm(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const bool& binary);
+void create_img(const int n, const Delaunay& dt, const int& img_width, const int& img_height, const double& density);
+void thread_img(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density);
 
 
 
@@ -65,7 +72,7 @@ int main(int argc, char *argv[]) {
   const int img_height = ceil(density * (max_y - min_y));
 
   // PGM image creation, result will be stored in /img_output
-  create_pgm(NB_THREAD, dt, img_width, img_height, density, BIN);
+  create_img(NB_THREAD, dt, img_width, img_height, density);
 
   // chrono end
   auto end = std::chrono::system_clock::now();
@@ -158,7 +165,7 @@ void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, d
 }
 
 
-void create_pgm(const int n, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const bool& binary) {
+void create_img(const int n, const Delaunay& dt, const int& img_width, const int& img_height, const double& density) {
   //// function to create the PGM image
 
   // generate file_name automatically according to date and hour
@@ -166,12 +173,16 @@ void create_pgm(const int n, const Delaunay& dt, const int& img_width, const int
   struct tm * ptm;
   time ( &rawtime );
   ptm = gmtime ( &rawtime );
-  string file_name = "../img_output/" + to_string(ptm->tm_mday) + "-" + to_string(ptm->tm_mon) + "_" + to_string(ptm->tm_hour) + "-" + to_string(ptm->tm_min) + "_render.pgm";
+  string file_name = "../img_output/" + to_string(ptm->tm_mday) + "-" + to_string(ptm->tm_mon) + "_" + to_string(ptm->tm_hour) + "-" + to_string(ptm->tm_min) + "_render";
+  if (PPM) {file_name = file_name + ".ppm";}
+  else {file_name = file_name + ".pgm";}
 
-  // writes PGM file header (P5 for binary, P2 for ASCII)
+  // writes PGM file header
   fstream img;
-  if (binary) {img.open(file_name, fstream::out | fstream::binary); img<<"P5 ";}
-  else {img.open(file_name, fstream::out); img << "P2 ";}
+  if        (!BIN && !PPM)    {img.open(file_name, fstream::out);                     img<<"P2 ";}
+  else if   (!BIN &&  PPM)    {img.open(file_name, fstream::out);                     img<<"P3 ";}
+  else if   ( BIN && !PPM)    {img.open(file_name, fstream::out | fstream::binary);   img<<"P5 ";}
+  else if   ( BIN &&  PPM)    {img.open(file_name, fstream::out | fstream::binary);   img<<"P6 ";}
   img << img_width << " "
       << img_height << " "
       << (int) MAX_PGM << endl;
@@ -180,7 +191,7 @@ void create_pgm(const int n, const Delaunay& dt, const int& img_width, const int
   array<thread,NB_THREAD> threads;
 
   for (int k=0; k<n; k++) {   // starts the threads
-    threads[k] = thread( [=] { thread_pgm(n, k, dt, img_width, img_height, density, binary); } ); }
+    threads[k] = thread( [=] { thread_img(n, k, dt, img_width, img_height, density); } ); }
 
   for(int k=0; k<n; k++) {    // stops them
     threads[k].join(); }
@@ -199,7 +210,7 @@ void create_pgm(const int n, const Delaunay& dt, const int& img_width, const int
 }
 
 
-void thread_pgm(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const bool& binary) {
+void thread_img(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density) {
   //// thread called to create the PGM image
   //cout << "Thread " + to_string(k) + " starting" << endl;
 
@@ -207,7 +218,7 @@ void thread_pgm(const int n, const int k, const Delaunay& dt, const int& img_wid
   fstream img_tmp;
   string file_name;
   file_name = "/tmp/MNT_tmp" + to_string(k);    // each file_name is different and placed in /tmp folder (deleted at each startup)
-  if (binary) {img_tmp.open(file_name, fstream::out | fstream::binary);}
+  if (BIN) {img_tmp.open(file_name, fstream::out | fstream::binary);}
   else {img_tmp.open(file_name, fstream::out);}
 
   // calculation of the section the k-th thread has to process
@@ -217,35 +228,58 @@ void thread_pgm(const int n, const int k, const Delaunay& dt, const int& img_wid
   if (k==n-1) {i_max = img_height;}   // last thread takes the rest
   else {i_max = (k+1)*len;}
 
-  // calculation of transformation parameters from z -> grey level
-  const double coeff = (MAX_PGM-MIN_PGM)/(max_z-min_z);
-  const double offset = MIN_PGM - coeff*min_z;
-
   // browse pixel and write color correspondance on the image file
   double img_z;
-  int pgm;
-  const int pgm_null = 1;             // background color, 0 cause write method to skip value
   Face_handle old_fh = NULL;
+  int val1, val2, val3;
+  int val_null = 1;             // background color, 0 cause write method to skip value
 
   for (int i=i_min; i<i_max; i++) {
     for (int j=0; j<img_width; j++) {
       // color calculation if pixel point on a valid triangle (non-infinite, non-null, area < MAX_AREA)
       try {
-        img_z = get_z(dt, min_x+j/density, max_y-i/density, old_fh);
-        pgm = round(coeff*img_z+offset);
-        if (binary) {img_tmp << reinterpret_cast<char*>(&pgm);}
-        else {img_tmp << pgm << " ";}
+        img_z = get_z(dt, min_x+j/density, max_y-i/density, old_fh);    // will throw exception if non-valid triangle
+        z_to_color(img_z, val1, val2, val3, PPM);
       }
       catch (invalid_argument& e) {
-        if (binary) {img_tmp << reinterpret_cast<char*>(&pgm_null);}
-        else {img_tmp << pgm_null << " ";}
+        val1 = val_null;
+        val2 = val_null;
+        val3 = val_null;
       }
+      write_img(img_tmp, val1, val2, val3, BIN, PPM);
       }
-      if (!binary) {img_tmp << endl;}
+      if (!BIN) {img_tmp << endl;}
     }
 
   // image is created, stream can be closed
   img_tmp.close();
 
   //cout << "Thread " + to_string(k) + " finished" << endl;
+}
+
+void z_to_color(const double z, int& val1, int& val2, int& val3, const bool ppm) {
+  if (!ppm) {
+    val1 = round( (MAX_PGM-MIN_PGM)/(max_z-min_z)*(z-min_z) + MIN_PGM );
+  }
+  else {
+    val1 = 255;
+    val2 = 1;
+    val3 = 1;
+  }
+}
+
+void write_val(fstream& data, int val, const bool bin) {
+  if (bin) {data << reinterpret_cast<char*>(&val);}
+  else {data << val << " ";}
+}
+
+void write_img(fstream& data, const int val1, const int val2, const int val3, const bool bin, const bool ppm) {
+  if (!ppm) {
+    write_val(data, val1, bin);
+  }
+  else {
+    write_val(data, val1, bin);
+    write_val(data, val2, bin);
+    write_val(data, val3, bin);
+  }
 }
