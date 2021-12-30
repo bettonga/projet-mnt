@@ -8,6 +8,8 @@
 #include <string>
 #include <array>
 #include <thread>
+#include <mutex>
+#include <cstddef>
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Projection_traits_xy_3.h>
@@ -29,17 +31,19 @@ using namespace std;
 
 #define MAX_AREA  10.0      // define the maximum area of a triangle
 #define MAX_PGM   255       // grey level coded on 1 byte
-#define MIN_PGM   0         // >0 so that the background does not blend with the MNT | can be 0 for PPM with colormap
+#define MIN_PGM   0         // >0 so that the background does not blend with the minimal depth | can be 0 for PPM with colormap
 #define ALTITUDE  45        // sun altitude, 0 for sun on the horizon, 90 for vertical
-#define AZIMUT    315         // sun azimut, 0 for North, 90 for East, 180 for South, 270 for West
+#define AZIMUT    315       // sun azimut, 0 for North, 90 for East, 180 for South, 270 for West
 #define PPM       true      // true for PPM, false for PGM
 #define BIN       true      // true for binary file, false for ASCII
-#define NB_THREAD 4         // number of threads creating the image (4 seems to be the most effective, even for larger file | set at 1 for non-parallel processing)
+#define SHD       true      // true for hill-shadind
+#define NB_THREAD 4         // number of threads creating the image
 
 
 
 // boundaries of the input terrain
 double min_x, max_x, min_y, max_y, min_z, max_z;
+mutex foo, bar;
 
 // Haxby colormap
 double tab_pixm [256][3]= {{0.1451,0.22353,0.68627},{0.14556,0.23429,0.69796},{0.14602,0.24506,0.70965},{0.14648,0.25582,0.72134},{0.14694,0.26659,0.73303},{0.1474,0.27735,0.74471},{0.14787,0.28812,0.7564},{0.14833,0.29889,0.76809},{0.14879,0.30965,0.77978},{0.14925,0.32042,0.79146},{0.14971,0.33118,0.80315},{0.15017,0.34195,0.81484},{0.15063,0.35271,0.82653},{0.1511,0.36348,0.83822},{0.15156,0.37424,0.8499},{0.15202,0.38501,0.86159},{0.15248,0.39577,0.87328},{0.15294,0.40654,0.88497},{0.1534,0.4173,0.89666},{0.15386,0.42807,0.90834},{0.15433,0.43883,0.92003},{0.15479,0.4496,0.93172},{0.15525,0.46036,0.94341},{0.15571,0.47113,0.95509},{0.15617,0.48189,0.96678},{0.15663,0.49266,0.97847},{0.15763,0.50288,0.98462},{0.15917,0.51257,0.98524},{0.16071,0.52226,0.98585},{0.16225,0.53195,0.98647},{0.16378,0.54164,0.98708},{0.16532,0.55133,0.9877},
@@ -55,18 +59,24 @@ int proj93(Delaunay& dt, char* file_name);
 // return the depth z according to a (x,y) point and the triangulation
 double get_z(const Delaunay& dt, double x, double y, Face_handle& old_fh, const Vector_3& sun, double& shadow);
 // if PGM: val1 is set to match the grey value | if PPM: val1, val2, val3 are respectively set to match R, G and B value
-void z_to_color(const double z, int& val1, int& val2, int& val3, const double shadow, const bool ppm);
-// write to file in binary or ASCII
+void z_to_color(const double z, int& val1, int& val2, int& val3, const double shadow, int (&rgbMax)[2]);
+// writes to file in binary or ASCII
 void write_val(fstream& data, const int val, const bool bin);
-// write to file according to PPM or PGM
-void write_img(fstream& data, const int val1, const int val2, const int val3, const bool bin, const bool ppm);
+// writes to file according to PPM or PGM
+void write_img(fstream& data, const int val1, const int val2, const int val3, const bool bin);
+// reads file in binary or ASCII
+int read_val(fstream& data, int& val);
 
 // updates min_x, max_x, min_y, max_y, min_z, max_z according to the boundaries of the input terrain
 void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, double& min_z, double& max_z, double new_x, double new_y, double new_z);
 
 // function and thread associated to create the PGM image
 void create_img(const int n, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun);
-void thread_img(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun);
+void thread_img(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun, int (&rgbMax)[2]);
+
+// brightens the image after the hill shading process
+void thread_lift(const int k, const int (&rgbMax)[2]);
+
 
 
 
@@ -95,6 +105,7 @@ int main(int argc, char *argv[]) {
   // chrono end
   auto end = std::chrono::system_clock::now();
   chrono::duration<double> elapsed_seconds = end-start;
+
   cout << "Elapsed time: " << elapsed_seconds.count() << "s\n";
 
   return EXIT_SUCCESS;
@@ -129,7 +140,7 @@ int proj93(Delaunay& dt, char* file_name) {
     // projection of the points
     c.lpz.lam = lat;
     c.lpz.phi = lon;
-    c.lpz.z = z;
+    c.lpz.z = abs(z);                       // useful because of z axis can be ascending or descending
     c_out = proj_trans(P, PJ_FWD, c);
     if (first == true) {                    // min_x, max_x, min_y, max_y, min_z, max_z initialization on the first point
       min_x = c_out.xyz.x; max_x = c_out.xyz.x; min_y = c_out.xyz.y; max_y = c_out.xyz.y; min_z = c_out.xyz.z; max_z = c_out.xyz.z;
@@ -163,48 +174,60 @@ double get_z(const Delaunay& dt, double x, double y, Face_handle& old_fh, const 
   Vector_3 v(a,c);
   if (0.5*(cross_product(u,v).squared_length()) > MAX_AREA) {throw invalid_argument("");}     // exit if triangle area is too large (not really on the terrain)
 
-  // hill-shading : shadow depending on the orientation between triangle and sun rays
-  Line_face_circulator l1 = dt.line_walk(a,b,fh);
-  Line_face_circulator l2 = dt.line_walk(b,c,fh);
-  Line_face_circulator l3 = dt.line_walk(c,a,fh);
-  Line_face_circulator& r1 = l1;
-  Line_face_circulator& r2 = l2;
-  Line_face_circulator& r3 = l3;
-  for (int i=0; i<6; i++) {r1++; r2++; r3++;}
-  Point_3 p1 = (*r1).vertex(0)->point();
-  Point_3 p2 = (*r1).vertex(0)->point();
-  Point_3 p3 = (*r1).vertex(0)->point();
-  Vector_3 uu(a,b);
-  Vector_3 vv(a,c);
-
-  Vector_3 n = cross_product(uu,vv);
-  if (n.z() < 0) {n = n*(-1);}
-  shadow = - scalar_product(n,sun) / (n.squared_length()*sun.squared_length());
-  if (shadow < 0) {shadow = 0;}
-  if (shadow > 1) {shadow = 1;}
-
   // interpolation : the (x,y,0) point is projected according to the vertical vector (0,0,1) on the face defined by the triangle located before
   double denom = (c[0]-a[0])*(b[1]-a[1]) - (c[1]-a[1])*(b[0]-a[0]);
   double mu = (  (b[1]-a[1])*(x-a[0]) - (b[0]-a[0])*(y-a[1]) ) / denom;
   double la = ( -(c[1]-a[1])*(x-a[0]) + (c[0]-a[0])*(y-a[1]) ) / denom;
   double z = a[2] + la*(b[2]-a[2]) + mu*(c[2]-a[2]);
+
+  if (SHD) {
+    Vector_3 n = normal(a, b, c);
+    if (n.z() < 0) {n = n*(-1);}
+    shadow = - scalar_product(n,sun) / (n.squared_length()*sun.squared_length());
+    if (shadow < 0) {shadow = 0;}
+    if (shadow > 1) {shadow = 1;}
+  }
+
   return z;
 }
 
 
-void z_to_color(const double z, int& val1, int& val2, int& val3, const double shadow, const bool ppm) {
+void z_to_color(const double z, int& val1, int& val2, int& val3, const double shadow, int (&rgbMax)[2]) {
   int val = round( (MAX_PGM-MIN_PGM)/(max_z-min_z)*(z-min_z) + MIN_PGM );
-  if (!ppm) {
-    val1 = val;
+  if (!PPM) {
+    val1 = val*shadow;
+    if (val1==0) {val1 = 1;}
+    else if (val1>rgbMax[0]) {
+      lock (foo,bar);
+      rgbMax[0]=val1; rgbMax[1]=0;
+      bar.unlock();
+      foo.unlock();}
+
   }
   else {
-    val = 255-val;
-    val1 = round(tab_pixm[val][0] * 255 * shadow);
+    val1 = round(tab_pixm[val][0] * MAX_PGM * shadow);
     if (val1==0) {val1 = 1;}
-    val2 = round(tab_pixm[val][1] * 255 * shadow);
+    else if (val1>rgbMax[0]) {
+      lock (foo,bar);
+      rgbMax[0]=val1; rgbMax[1]=0;
+      bar.unlock();
+      foo.unlock();}
+
+    val2 = round(tab_pixm[val][1] * MAX_PGM * shadow);
     if (val2==0) {val2 = 1;}
-    val3 = round(tab_pixm[val][2] * 255 * shadow);
+    else if (val1>rgbMax[0]) {
+      lock (foo,bar);
+      rgbMax[0]=val2; rgbMax[1]=1;
+      bar.unlock();
+      foo.unlock();}
+
+    val3 = round(tab_pixm[val][2] * MAX_PGM * shadow);
     if (val3==0) {val3 = 1;}
+    else if (val1>rgbMax[0]) {
+      lock (foo,bar);
+      rgbMax[0]=val3; rgbMax[1]=2;
+      bar.unlock();
+      foo.unlock();}
   }
 }
 
@@ -215,8 +238,8 @@ void write_val(fstream& data, int val, const bool bin) {
 }
 
 
-void write_img(fstream& data, const int val1, const int val2, const int val3, const bool bin, const bool ppm) {
-  if (!ppm) {
+void write_img(fstream& data, const int val1, const int val2, const int val3, const bool bin) {
+  if (!PPM) {
     write_val(data, val1, bin);
   }
   else {
@@ -261,17 +284,28 @@ void create_img(const int n, const Delaunay& dt, const int& img_width, const int
       << (int) MAX_PGM << endl;
 
   // start image creation, each thread process (1/n)th of the image, then all tmp file are concatenated
-  array<thread,NB_THREAD> threads;
+  array<thread,NB_THREAD> threads_img;
+  array<thread,NB_THREAD> threads_lift;
+  int rgbMax [2] = {0,0};    // {val, i} : val = max value of R G and B after hill shading | i=0 for R, i=1 for G, i=2 for B
 
   for (int k=0; k<n; k++) {   // starts the threads
-    threads[k] = thread( [=] { thread_img(n, k, dt, img_width, img_height, density, sun); } ); }
+    threads_img[k] = thread( [&, k] { thread_img(n, k, dt, img_width, img_height, density, sun, rgbMax); } ); }
 
   for(int k=0; k<n; k++) {    // stops them
-    threads[k].join(); }
+    threads_img[k].join(); }
+
+  if (SHD) {
+    for (int k=0; k<n; k++) {   // starts the threads
+      threads_lift[k] = thread( [&, k] { thread_lift(k, rgbMax); } ); }
+
+    for(int k=0; k<n; k++) {    // stops them
+      threads_lift[k].join(); }
+  }
 
   for(int k=0; k<n; k++) {   // concatenation of all n tmp files
     fstream img_mrg;
-    file_name = "/tmp/MNT_tmp" + to_string(k);
+    if (SHD) {file_name = "/tmp/MNT_tmplift" + to_string(k);}
+    else {file_name = "/tmp/MNT_tmp" + to_string(k);}
     img_mrg.open(file_name, fstream::in);
 
     img << img_mrg.rdbuf();
@@ -283,9 +317,8 @@ void create_img(const int n, const Delaunay& dt, const int& img_width, const int
 }
 
 
-void thread_img(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun) {
+void thread_img(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun, int (&rgbMax)[2]) {
   //// thread called to create the PGM image
-  //cout << "Thread " + to_string(k) + " starting" << endl;
 
   // opening of a tmp file for writing
   fstream img_tmp;
@@ -305,27 +338,70 @@ void thread_img(const int n, const int k, const Delaunay& dt, const int& img_wid
   double img_z;
   Face_handle old_fh = NULL;
   int val1, val2, val3;
-  double shadow;
+  double shadow = 1.0;
 
   for (int i=i_min; i<i_max; i++) {
     for (int j=0; j<img_width; j++) {
       // color calculation if pixel point on a valid triangle (non-infinite, non-null, area < MAX_AREA)
       try {
         img_z = get_z(dt, min_x+j/density, max_y-i/density, old_fh, sun, shadow);    // will throw exception if non-valid triangle
-        z_to_color(img_z, val1, val2, val3, shadow, PPM);
+        z_to_color(img_z, val1, val2, val3, shadow, rgbMax);
       }
       catch (invalid_argument& e) {
         val1 = 1;
         val2 = 1;
         val3 = 1;
       }
-      write_img(img_tmp, val1, val2, val3, BIN, PPM);
+      write_img(img_tmp, val1, val2, val3, BIN);
       }
-      if (!BIN) {img_tmp << endl;}
     }
 
   // image is created, stream can be closed
   img_tmp.close();
+}
 
-  //cout << "Thread " + to_string(k) + " finished" << endl;
+
+void thread_lift(const int k, const int (&rgbMax)[2]) {
+  // opening of a tmp file for reading
+  fstream img_tmp;
+  string file_name;
+  file_name = "/tmp/MNT_tmp" + to_string(k);    // each file_name is different and placed in /tmp folder (deleted at each startup)
+  if (BIN) {img_tmp.open(file_name, fstream::in | fstream::binary);}
+  else {img_tmp.open(file_name, fstream::in);}
+
+  // opening of a tmp file for writing
+  fstream img_tmplift;
+  string file_namelift;
+  file_namelift = "/tmp/MNT_tmplift" + to_string(k);    // each file_name is different and placed in /tmp folder (deleted at each startup)
+  if (BIN) {img_tmplift.open(file_namelift, fstream::out | fstream::binary);}
+  else {img_tmplift.open(file_namelift, fstream::out);}
+
+  int val;
+  double coeff = (MAX_PGM-MIN_PGM)/rgbMax[0];
+
+  while(read_val(img_tmp, val)) {
+    if (val==1) {
+      write_val(img_tmplift, 1, BIN);
+    }
+    else {
+      val = round(val*coeff);
+      write_val(img_tmplift, val, BIN);
+    }
+  }
+  img_tmp.close();
+  img_tmplift.close();
+}
+
+int read_val(fstream& data, int& val) {
+  if (BIN) {
+    char x ;
+    data.read(&x, 1);
+    val = static_cast<uint8_t>(x);
+    if (data.eof()) {return 0;}
+    return 1;
+  }
+  else {
+    if(data>>val) {return 1;}
+    return 0;
+  }
 }
