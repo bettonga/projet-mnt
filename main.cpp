@@ -53,7 +53,7 @@ double tab_pixm [256][3]= {{0.1451,0.22353,0.68627},{0.14556,0.23429,0.69796},{0
 
 
 
-// project GPS datas into cartesian coordinates, and insert them into a Delaunay 2D triangulation
+// project GPS data into cartesian coordinates, and insert them into a Delaunay 2D triangulation
 int proj93(Delaunay& dt, char* file_name);
 
 // return the depth z according to a (x,y) point and the triangulation
@@ -99,7 +99,7 @@ int main(int argc, char *argv[]) {
   double azimut_rad   = (AZIMUT*M_PI)/180;
   Vector_3 sun( cos(azimut_rad)*cos(altitude_rad) , sin(azimut_rad)*cos(altitude_rad) , -sin(altitude_rad) );
 
-  // PGM image creation, result will be stored in /img_output
+  // PGM image creation, result will be stored in /renders
   create_img(NB_THREAD, dt, img_width, img_height, density, sun);
 
   // chrono end
@@ -117,7 +117,7 @@ int main(int argc, char *argv[]) {
 
 
 int proj93(Delaunay& dt, char* file_name) {
-  //// project GPS datas into cartesian coordinates, and insert them into a Delaunay 2D triangulation
+  //// project GPS data into cartesian coordinates, and insert them into a Delaunay 2D triangulation
 
   // projection initialization, will project GPS WGS84 -> cartesian xyz
   PJ *P;
@@ -269,7 +269,7 @@ void create_img(const int n, const Delaunay& dt, const int& img_width, const int
   struct tm * ptm;
   time ( &rawtime );
   ptm = gmtime ( &rawtime );
-  string file_name = "../img_output/" + to_string(ptm->tm_mday) + "-" + to_string(ptm->tm_mon) + "_" + to_string(ptm->tm_hour) + "-" + to_string(ptm->tm_min) + "_render";
+  string file_name = "../renders/" + to_string(ptm->tm_mday) + "-" + to_string(ptm->tm_mon) + "_" + to_string(ptm->tm_hour) + "-" + to_string(ptm->tm_min) + "_render";
   if (PPM) {file_name = file_name + ".ppm";}
   else {file_name = file_name + ".pgm";}
 
