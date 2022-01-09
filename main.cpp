@@ -269,7 +269,7 @@ void create_img(const int n, const Delaunay& dt, const int& img_width, const int
   struct tm * ptm;
   time ( &rawtime );
   ptm = gmtime ( &rawtime );
-  string file_name = "renders/" + to_string(ptm->tm_mday) + "-" + to_string(ptm->tm_mon) + "_" + to_string(ptm->tm_hour) + "-" + to_string(ptm->tm_min) + "_render";
+  string file_name = "../renders/" + to_string(ptm->tm_mday) + "-" + to_string(ptm->tm_mon) + "_" + to_string(ptm->tm_hour) + "-" + to_string(ptm->tm_min) + "_render";
   if (PPM) {file_name = file_name + ".ppm";}
   else {file_name = file_name + ".pgm";}
 

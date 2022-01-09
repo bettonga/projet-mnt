@@ -3,6 +3,8 @@
 # Usage: ./build.sh
 
 mkdir renders
+mkdir build
 
-cmake .
+cd build
+cmake ..
 cmake --build .
