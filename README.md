@@ -7,7 +7,7 @@ A program that creates a raster of a Digital Elevation Model given a series of m
 * CGAL (```sudo apt-get install libcgal-dev```)
 
 ## How to use it
-Once cloned, open a terminal in the repository and execute ```./build.sh```.  
+Once cloned, open a terminal in the repository and execute ```./build.sh```, then ```cd build/```.
 
 The program can now be executed
 ```
