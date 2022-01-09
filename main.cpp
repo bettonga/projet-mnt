@@ -1,3 +1,13 @@
+/**
+ * \file main.cpp
+ * \brief DEM Project
+ * \author Gabriel Betton
+ * \date 9/01/2022
+ *
+ * A program that creates a raster of a Digital Elevation Model given a series of measurement.
+ *
+ */
+
 #include <iostream>
 #include <fstream>
 #include <proj.h>
@@ -29,15 +39,24 @@ typedef K::Vector_3               Vector_3;
 using namespace std;
 
 
-#define MAX_AREA  10.0      // define the maximum area of a triangle
-#define MAX_PGM   255       // grey level coded on 1 byte
-#define MIN_PGM   0         // >0 so that the background does not blend with the minimal depth | can be 0 for PPM with colormap
-#define ALTITUDE  45        // sun altitude, 0 for sun on the horizon, 90 for vertical
-#define AZIMUT    315       // sun azimut, 0 for North, 90 for East, 180 for South, 270 for West
-#define PPM       true      // true for PPM, false for PGM
-#define BIN       true      // true for binary file, false for ASCII
-#define SHD       true      // true for hill-shadind
-#define NB_THREAD 4         // number of threads creating the image
+/** \brief define the maximum area of a triangle */
+#define MAX_AREA 10.0
+/** \brief grey level coded on 1 byte */
+#define MAX_PGM 255
+/** \brief >0 so that the background does not blend with the minimal depth | can be 0 for PPM with colormap */
+#define MIN_PGM 0
+/** \brief sun altitude, 0 for sun on the horizon, 90 for vertical */
+#define ALTITUDE 45
+/** \brief sun azimut, 0 for North, 90 for East, 180 for South, 270 for West */
+#define AZIMUT 315
+/** \brief true for PPM, false for PGM */
+#define PPM true
+/** \brief true for binary file, false for ASCII */
+#define BIN true
+/** \brief true for hill-shadind */
+#define SHD true
+/** \brief number of threads creating the image */
+#define NB_THREAD 4
 
 
 
@@ -54,7 +73,7 @@ double tab_pixm [256][3]= {{0.1451,0.22353,0.68627},{0.14556,0.23429,0.69796},{0
 
 
 // project GPS data into cartesian coordinates, and insert them into a Delaunay 2D triangulation
-int proj93(Delaunay& dt, char* file_name);
+void proj93(Delaunay& dt, char* file_name);
 
 // return the depth z according to a (x,y) point and the triangulation
 double get_z(const Delaunay& dt, double x, double y, Face_handle& old_fh, const Vector_3& sun, double& shadow);
@@ -62,17 +81,17 @@ double get_z(const Delaunay& dt, double x, double y, Face_handle& old_fh, const 
 void z_to_color(const double z, int& val1, int& val2, int& val3, const double shadow, int (&rgbMax)[2]);
 // writes to file in binary or ASCII
 void write_val(fstream& data, const int val, const bool bin);
-// writes to file according to PPM or PGM
-void write_img(fstream& data, const int val1, const int val2, const int val3, const bool bin);
 // reads file in binary or ASCII
 int read_val(fstream& data, int& val);
+// writes to file according to PPM or PGM
+void write_img(fstream& data, const int val1, const int val2, const int val3, const bool bin);
 
 // updates min_x, max_x, min_y, max_y, min_z, max_z according to the boundaries of the input terrain
 void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, double& min_z, double& max_z, double new_x, double new_y, double new_z);
 
 // function and thread associated to create the PGM image
-void create_img(const int n, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun);
-void thread_img(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun, int (&rgbMax)[2]);
+void create_img(const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun);
+void thread_img(const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun, int (&rgbMax)[2]);
 
 // brightens the image after the hill shading process
 void thread_lift(const int k, const int (&rgbMax)[2]);
@@ -100,7 +119,7 @@ int main(int argc, char *argv[]) {
   Vector_3 sun( cos(azimut_rad)*cos(altitude_rad) , sin(azimut_rad)*cos(altitude_rad) , -sin(altitude_rad) );
 
   // PGM image creation, result will be stored in /renders
-  create_img(NB_THREAD, dt, img_width, img_height, density, sun);
+  create_img(dt, img_width, img_height, density, sun);
 
   // chrono end
   auto end = std::chrono::system_clock::now();
@@ -115,10 +134,12 @@ int main(int argc, char *argv[]) {
 
 
 
-
-int proj93(Delaunay& dt, char* file_name) {
-  //// project GPS data into cartesian coordinates, and insert them into a Delaunay 2D triangulation
-
+/**
+ * \fn int proj93(Delaunay& dt, char* file_name)
+ * \brief projects GPS data into cartesian coordinates, and insert them into a Delaunay 2D triangulation
+ * \param dt edited Delaunay_triangulation_2 given the file file_name
+ */
+void proj93(Delaunay& dt, char* file_name) {
   // projection initialization, will project GPS WGS84 -> cartesian xyz
   PJ *P;
   PJ_COORD c, c_out;
@@ -155,13 +176,16 @@ int proj93(Delaunay& dt, char* file_name) {
   // close file and destroy projection
   proj_destroy(P);
   data.close();
-  return 0;
 }
 
 
+/**
+ * \fn double get_z(const Delaunay& dt, double x, double y, Face_handle& old_fh, const Vector_3& sun, double& shadow)
+ * \brief computes the depth z of a (x,y) point and its shadow coefficient
+ * \param dt Delaunay_triangulation_2, x and y coordinates of the point, old_fh keeps the face of the last point located, the sun vector is compared to the normale of the face to compute shadow
+ * \return the depth z of the (x,y) point
+ */
 double get_z(const Delaunay& dt, double x, double y, Face_handle& old_fh, const Vector_3& sun, double& shadow){
-  //// return the depth z according to a (x,y) point and the triangulation
-
   // location of a valid triangle containing the (x,y) point
   Point_3 p(x,y,0.0);
   Face_handle fh = dt.locate(p, old_fh);                                    // old_fh is the starting point of locate method
@@ -191,7 +215,11 @@ double get_z(const Delaunay& dt, double x, double y, Face_handle& old_fh, const 
   return z;
 }
 
-
+/**
+ * \fn void z_to_color(const double z, int& val1, int& val2, int& val3, const double shadow, int (&rgbMax)[2])
+ * \brief computes the color corresponding to the depth z
+ * \param given the depth z and the shadow coefficient, if PGM: val1 is set to match the grey value, if PPM: val1, val2, val3 are respectively set to match R, G and B value, additionaly rgbMax keeps the maximum value of R, G and B for post lifting
+ */
 void z_to_color(const double z, int& val1, int& val2, int& val3, const double shadow, int (&rgbMax)[2]) {
   int val = round( (MAX_PGM-MIN_PGM)/(max_z-min_z)*(z-min_z) + MIN_PGM );
   if (!PPM) {
@@ -202,7 +230,6 @@ void z_to_color(const double z, int& val1, int& val2, int& val3, const double sh
       rgbMax[0]=val1; rgbMax[1]=0;
       bar.unlock();
       foo.unlock();}
-
   }
   else {
     val1 = round(tab_pixm[val][0] * MAX_PGM * shadow);
@@ -231,13 +258,21 @@ void z_to_color(const double z, int& val1, int& val2, int& val3, const double sh
   }
 }
 
-
+/**
+ * \fn void write_val(fstream& data, int val, const bool bin)
+ * \brief writes a value in a stream, in binary or ASCII
+ * \param writes val in data, in binary if bin=true, in ASCII if bin=false
+ */
 void write_val(fstream& data, int val, const bool bin) {
   if (bin) {data << reinterpret_cast<char*>(&val);}
   else {data << val << " ";}
 }
 
-
+/**
+ * \fn void write_img(fstream& data, const int val1, const int val2, const int val3, const bool bin)
+ * \brief writes color values in a stream, for PGM or PPM
+ * \param writes values in data, val1 if PPM=true, val1,val2,val3 if PPM=false, in binary if bin=true, in ASCII if bin=false
+ */
 void write_img(fstream& data, const int val1, const int val2, const int val3, const bool bin) {
   if (!PPM) {
     write_val(data, val1, bin);
@@ -249,9 +284,12 @@ void write_img(fstream& data, const int val1, const int val2, const int val3, co
   }
 }
 
-
+/**
+ * \fn void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, double& min_z, double& max_z, double new_x, double new_y, double new_z)
+ * \brief updates the min and max values of x, y and z of the terrain
+ * \param given new_x, new_y and new_z, updates min_x, max_x, min_y, max_y, min_z, max_z
+ */
 void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, double& min_z, double& max_z, double new_x, double new_y, double new_z){
-  //// updates min_x, max_x, min_y, max_y, min_z, max_z according to the boundaries of the input terrain
   if (new_x<min_x) {min_x = floor(new_x);}
   else if (new_x>max_x) {max_x = ceil(new_x);}
   if (new_y<min_y) {min_y = floor(new_y);}
@@ -260,10 +298,12 @@ void update_maxmin(double& min_x, double& max_x, double& min_y, double& max_y, d
   else if (new_z>max_z) {max_z = new_z;}
 }
 
-
-void create_img(const int n, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun) {
-  //// function to create the PGM image
-
+/**
+ * \fn void create_img(const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun)
+ * \brief creates the image
+ * \param creates the image of the dt triangulation given the sun vector, image size is defined by img_width, img_height and density
+ */
+void create_img(const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun) {
   // generate file_name automatically according to date and hour
   time_t rawtime;
   struct tm * ptm;
@@ -288,21 +328,21 @@ void create_img(const int n, const Delaunay& dt, const int& img_width, const int
   array<thread,NB_THREAD> threads_lift;
   int rgbMax [2] = {0,0};    // {val, i} : val = max value of R G and B after hill shading | i=0 for R, i=1 for G, i=2 for B
 
-  for (int k=0; k<n; k++) {   // starts the threads
-    threads_img[k] = thread( [&, k] { thread_img(n, k, dt, img_width, img_height, density, sun, rgbMax); } ); }
+  for (int k=0; k<NB_THREAD; k++) {   // starts the threads
+    threads_img[k] = thread( [&, k] { thread_img(k, dt, img_width, img_height, density, sun, rgbMax); } ); }
 
-  for(int k=0; k<n; k++) {    // stops them
+  for(int k=0; k<NB_THREAD; k++) {    // stops them
     threads_img[k].join(); }
 
   if (SHD) {
-    for (int k=0; k<n; k++) {   // starts the threads
+    for (int k=0; k<NB_THREAD; k++) {   // starts the threads
       threads_lift[k] = thread( [&, k] { thread_lift(k, rgbMax); } ); }
 
-    for(int k=0; k<n; k++) {    // stops them
+    for(int k=0; k<NB_THREAD; k++) {    // stops them
       threads_lift[k].join(); }
   }
 
-  for(int k=0; k<n; k++) {   // concatenation of all n tmp files
+  for(int k=0; k<NB_THREAD; k++) {   // concatenation of all n tmp files
     fstream img_mrg;
     if (SHD) {file_name = "/tmp/MNT_tmplift" + to_string(k);}
     else {file_name = "/tmp/MNT_tmp" + to_string(k);}
@@ -316,8 +356,12 @@ void create_img(const int n, const Delaunay& dt, const int& img_width, const int
   img.close();
 }
 
-
-void thread_img(const int n, const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun, int (&rgbMax)[2]) {
+/**
+ * \fn void thread_img(const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun, int (&rgbMax)[2])
+ * \brief thread of create_img()
+ * \param create_img() parameters are passed, computes the k th part of the dt triangulation, keeps rgbMax updated
+ */
+void thread_img(const int k, const Delaunay& dt, const int& img_width, const int& img_height, const double& density, const Vector_3& sun, int (&rgbMax)[2]) {
   //// thread called to create the PGM image
 
   // opening of a tmp file for writing
@@ -328,10 +372,10 @@ void thread_img(const int n, const int k, const Delaunay& dt, const int& img_wid
   else {img_tmp.open(file_name, fstream::out);}
 
   // calculation of the section the k-th thread has to process
-  int len = ceil(img_height / n);
+  int len = ceil(img_height / NB_THREAD);
   int i_min = k*len;
   int i_max;
-  if (k==n-1) {i_max = img_height;}   // last thread takes the rest
+  if (k==NB_THREAD-1) {i_max = img_height;}   // last thread takes the rest
   else {i_max = (k+1)*len;}
 
   // browse pixel and write color correspondance on the image file
@@ -360,7 +404,11 @@ void thread_img(const int n, const int k, const Delaunay& dt, const int& img_wid
   img_tmp.close();
 }
 
-
+/**
+ * \fn void thread_lift(const int k, const int (&rgbMax)[2])
+ * \brief lifts the color of the image after the shadowing
+ * \param computes the k th part of the dt triangulation given rgbMax
+ */
 void thread_lift(const int k, const int (&rgbMax)[2]) {
   // opening of a tmp file for reading
   fstream img_tmp;
@@ -392,6 +440,12 @@ void thread_lift(const int k, const int (&rgbMax)[2]) {
   img_tmplift.close();
 }
 
+/**
+ * \fn int read_val(fstream& data, int& val)
+ * \brief reads int from stream
+ * \param updates val given the stream data, reads in binary or ASCII
+ * \return the depth z of the (x,y) point
+ */
 int read_val(fstream& data, int& val) {
   if (BIN) {
     char x ;
