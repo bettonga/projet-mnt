@@ -1,2 +1,2 @@
-# projet-mnt
-C++ / Rendu de Modèle Numérique de Terrain Robotique / UE 3.1 - Projet - 2021/2022
+# DEM Project
+A program that creates a raster of a Digital Elevation Model given a series of measurement.
